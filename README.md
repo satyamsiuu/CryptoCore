@@ -1,6 +1,55 @@
-Parallel Encryption and Decryption
-Overview
+# Your Parallel Encryption and Decryption
 
-This project demonstrates encryption and decryption mechanisms using parallel processing techniques in C++. By leveraging both multiprocessing and multithreading, it aims to enhance the efficiency and performance of cryptographic operations.
+## Overview
+This project demonstrates the implementation of **encryption and decryption mechanisms** using **parallel processing techniques** in C++. By leveraging both **multiprocessing** and **multithreading**, the project aims to enhance the efficiency and performance of cryptographic operations.
 
-Branches
+---
+
+## Branches
+The repository contains two primary branches, each focusing on a distinct parallel processing approach:
+
+### 1. `add/childProcessing`
+**Description:**  
+This branch showcases the use of **parallel multiprocessing** by creating child processes to handle encryption and decryption tasks. It utilizes the `fork()` system call to spawn child processes, enabling concurrent execution of tasks.
+
+**Key Features:**
+- **Process Management:** Implements process creation and management using `fork()`.
+- **Task Queue:** Manages encryption and decryption tasks using a queue structure.
+- **Task Execution:** Child processes execute tasks independently, allowing parallel processing.
+
+---
+
+### 2. `add/multithreading`
+**Description:**  
+This branch focuses on **multithreading** combined with shared memory to perform encryption and decryption. It employs **POSIX threads (`pthread`)** and utilizes shared memory segments for efficient inter-thread communication.
+
+**Key Features:**
+- **Multithreading:** Implements concurrent execution using POSIX threads.
+- **Shared Memory:** Utilizes shared memory for communication between threads.
+- **Semaphores:** Employs semaphores to manage synchronization and ensure data consistency.
+
+---
+
+## Getting Started
+To explore the implementations in each branch, follow these steps:
+
+```bash
+# Clone the repository
+git clone <repo-url>
+cd encrypty
+
+# Switch to the desired branch
+git checkout <branch>
+
+# Create and activate a virtual environment
+python -m venv /myvenv
+source myvenv/bin/activate
+
+# Create necessary directories
+python makeDirs.py
+
+# Build the project
+make
+
+# Run the executable
+./encrypty
