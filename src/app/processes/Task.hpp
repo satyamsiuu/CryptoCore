@@ -24,6 +24,8 @@ struct Task
     {
         std::ostringstream oss;
         oss << filePath << "," << (action==Action::ENCRYPT? "ENCRYPT": "DECRYPT");
+        // test.txt ENCRYPT f_stream
+        // "test.txt, ENCRYPT "
         return oss.str();
     }
 
