@@ -2,11 +2,45 @@
 #include <iostream>
 #include <string>
 #include <sys/wait.h>
+#include <vector>
+#include <sstream>
+#include <fstream>
 
-// Placeholder for actual encryption/decryption implementation.
+// Simple XOR encryption/decryption key
+const char CRYPTO_KEY = 0x42; // You can change this key
+
 static void executeCryption(const std::string &taskStr)
 {
-    std::cout << "[executeCryption] called with: " << taskStr << std::endl;
+    std::istringstream iss(taskStr);
+    std::string filePath;
+    std::string actionStr;
+
+    if (std::getline(iss, filePath, ',') && std::getline(iss, actionStr))
+    {
+        std::fstream file(filePath, std::ios::in | std::ios::out | std::ios::binary);
+        if (!file)
+        {
+            std::cout << "Failed to open file: " << filePath << std::endl;
+            return;
+        }
+
+        // Read entire file
+        std::vector<char> buffer(std::istreambuf_iterator<char>(file), {});
+
+        // XOR each byte with the key
+        for (char &byte : buffer)
+        {
+            byte ^= CRYPTO_KEY;
+        }
+
+        // Write back to file
+        file.seekp(0);
+        file.write(buffer.data(), buffer.size());
+        file.flush();
+
+        std::cout << "Successfully " << (actionStr == "ENCRYPT" ? "encrypted" : "decrypted")
+                  << " file: " << filePath << std::endl;
+    }
 }
 
 ProcessManagement::ProcessManagement() {}
