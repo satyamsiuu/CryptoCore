@@ -1,10 +1,15 @@
 #include "ProcessManagement.hpp"
 #include <iostream>
-#include <string.h>
+#include <string>
 #include <sys/wait.h>
-// #include "../encyptDecrypt/Cryption.hpp"
 
-ProcessManagement::ProcessManagement(){}
+// Placeholder for actual encryption/decryption implementation.
+static void executeCryption(const std::string &taskStr)
+{
+    std::cout << "[executeCryption] called with: " << taskStr << std::endl;
+}
+
+ProcessManagement::ProcessManagement() {}
 
 bool ProcessManagement::submitToQueue(std::unique_ptr<Task> task)
 {
@@ -14,11 +19,12 @@ bool ProcessManagement::submitToQueue(std::unique_ptr<Task> task)
 
 void ProcessManagement::executeTasks()
 {
-    while(!taskQueue.empty())
+    while (!taskQueue.empty())
     {
-        std::unique_ptr<Task> tasktoExecute = std::movea(taskQueue.front());
+        // Move the unique_ptr out of the queue's front
+        std::unique_ptr<Task> tasktoExecute = std::move(taskQueue.front());
         taskQueue.pop();
-        std::cout << "Executing Task: " << tasktoExecute->toString << std::endl;
+        std::cout << "Executing Task: " << tasktoExecute->toString() << std::endl;
         executeCryption(tasktoExecute->toString());
     }
 }
