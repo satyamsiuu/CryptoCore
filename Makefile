@@ -1,5 +1,5 @@
 CC = g++
-CFLAGS = -std=c++17 -Wall -Wextra -g -DGL_SILENCE_DEPRECATION
+CFLAGS = -std=c++17 -Wall -Wextra -g -DGL_SILENCE_DEPRECATION -pthread
 INCLUDES = -I./src -I./src/app -I./src/app/fileHandling -I./src/app/processes \
           -I./vendor/imgui -I./vendor/imgui/backends -I/opt/homebrew/include
 
@@ -22,6 +22,7 @@ CONSOLE_TARGET = encrypt_decrypt.exe
 GUI_SRCS = src/main_gui.cpp \
            src/gui/CryptoCoreGUI.cpp \
            src/app/processes/ProcessManagement.cpp \
+           src/app/processes/TaskManager.cpp \
            src/app/fileHandling/IO.cpp \
            src/app/fileHandling/ReadEnv.cpp \
            $(IMGUI_SRCS)

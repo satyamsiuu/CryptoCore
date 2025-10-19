@@ -1,0 +1,59 @@
+void CryptoCoreGUI::renderProcessingPanel()
+{
+    const float PANEL_WIDTH = 600;
+    const float PANEL_HEIGHT = 400;
+    
+    ImGui::SetNextWindowPos(ImVec2((WINDOW_WIDTH - PANEL_WIDTH) * 0.5f, (WINDOW_HEIGHT - PANEL_HEIGHT) * 0.5f), 
+                           ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(PANEL_WIDTH, PANEL_HEIGHT), ImGuiCond_Appearing);
+    
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 20));
+    if (ImGui::Begin("Processing Status", &showProcessingPanel))
+    {
+        // Show execution time
+        auto currentTime = std::chrono::steady_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - startTime).count();
+        ImGui::Text("Execution Time: %.2f seconds", duration / 1000.0f);
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Show active threads/processes
+        if (taskManager) {
+            if (useThreads) {
+                auto threadIds = taskManager->getActiveThreadIds();
+                ImGui::Text("Active Threads:");
+                for (size_t i = 0; i < threadIds.size(); i++) {
+                    float threadProgress = taskManager->getProgress(i);
+                    ImGui::Text("Thread %zu (ID: %lu)", i, threadIds[i]);
+                    ImGui::ProgressBar(threadProgress, ImVec2(-1, 8), 
+                                     std::to_string(static_cast<int>(threadProgress * 100)) + "%%");
+                    ImGui::Spacing();
+                }
+            } else {
+                auto processIds = taskManager->getActiveProcessIds();
+                ImGui::Text("Active Processes:");
+                for (size_t i = 0; i < processIds.size(); i++) {
+                    float processProgress = taskManager->getProgress(i);
+                    ImGui::Text("Process %zu (PID: %d)", i, processIds[i]);
+                    ImGui::ProgressBar(processProgress, ImVec2(-1, 8),
+                                     std::to_string(static_cast<int>(processProgress * 100)) + "%%");
+                    ImGui::Spacing();
+                }
+            }
+        }
+
+        // Log messages
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::Text("Log Messages:");
+        ImGui::BeginChild("LogMessages", ImVec2(0, 120), true);
+        for (const auto& msg : logMessages) {
+            ImGui::TextWrapped("%s", msg.c_str());
+        }
+        ImGui::EndChild();
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+}
