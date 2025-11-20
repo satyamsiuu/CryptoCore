@@ -8,6 +8,8 @@
 #include <memory>
 #include <string>
 #include "Task.hpp"
+#include "SyncStats.hpp"
+#include "EncryptionTechnique.hpp"
 
 class TaskManager; // Forward declaration
 
@@ -30,6 +32,10 @@ public:
 
     bool runWithThreads(const std::string &filePath, bool isEncryption, size_t numThreads = 4);
     bool runWithProcesses(const std::string &filePath, bool isEncryption, size_t numProcesses = 4);
+    
+    // Set encryption technique
+    void setEncryptionTechnique(std::unique_ptr<EncryptionTechnique> technique);
+    EncryptionType getCurrentTechniqueType() const;
 
     float getProgress(size_t threadId) const;
     std::string getStatusMessage() const;
@@ -58,6 +64,7 @@ private:
     std::vector<pid_t> allChildProcesses;
     std::string statusMessage;
     int pipefd[2];
+    std::unique_ptr<EncryptionTechnique> currentTechnique;
 };
 
 #endif

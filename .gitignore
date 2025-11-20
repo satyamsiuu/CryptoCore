@@ -1,0 +1,19 @@
+# Build artifacts
+*.exe
+*.o
+*.dSYM/
+
+# IDE / OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+/tmp/*.log
+
+# Python caches
+__pycache__/
+*.pyc
+
+# Other
+encrypt_decrypt.exe
+cryptocore_gui.exe

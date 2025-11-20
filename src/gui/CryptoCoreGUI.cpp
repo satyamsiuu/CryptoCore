@@ -343,219 +343,6 @@ void CryptoCoreGUI::renderStatusBar()
     ImGui::PopStyleVar(2);
 }
 
-void CryptoCoreGUI::renderProcessingPanel()
-{
-    const float PANEL_WIDTH = 600;
-    const float PANEL_HEIGHT = 400;
-
-    ImGui::SetNextWindowPos(ImVec2((WINDOW_WIDTH - PANEL_WIDTH) * 0.5f, (WINDOW_HEIGHT - PANEL_HEIGHT) * 0.5f),
-                            ImGuiCond_Appearing);
-    ImGui::SetNextWindowSize(ImVec2(PANEL_WIDTH, PANEL_HEIGHT), ImGuiCond_Appearing);
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 20));
-    if (ImGui::Begin("Processing Status", &showProcessingPanel))
-    {
-        // Check completion status
-        if (taskManager && !isCompleted) // Check even if not isProcessing in case worker finished
-        {
-            // Update process hierarchy for real-time monitoring
-            taskManager->updateProcessHierarchy();
-            // Clear completed processes to get accurate status
-            taskManager->clearCompletedProcesses();
-            bool done = taskManager->isProcessingComplete();
-
-            if (done)
-            {
-                std::lock_guard<std::mutex> lk(logMutex);
-                if (!isCompleted) // Avoid duplicate updates
-                {
-                    isCompleted = true;
-                    isProcessing = false;
-
-                    // If we still have a dynamic line, clean it up and add completion message
-                    if (hasDynamicLog && !logMessages.empty())
-                    {
-                        logMessages.pop_back();
-                        hasDynamicLog = false;
-                        // Add completion message based on the actual operation
-                        std::string completedMsg = (statusMessage.find("Encrypting") != std::string::npos) ? "File encrypted!" : "File decrypted!";
-                        statusMessage = completedMsg; // Update the status message for the status bar
-                        logMessages.push_back(completedMsg);
-                        // Add final time
-                        auto finalTime = std::chrono::steady_clock::now();
-                        completionTime = std::chrono::duration_cast<std::chrono::microseconds>(finalTime - startTime);
-                        char timeMsg[128];
-                        long long us = completionTime.count();
-                        double secs = us / 1e6;
-                        snprintf(timeMsg, sizeof(timeMsg), "[Done] Total Execution Time: %lld µs (%.6f s)", us, secs);
-                        logMessages.push_back(timeMsg);
-                    }
-                }
-            }
-        } // Show execution time
-        // Log messages (now at the top)
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-        ImGui::Text("Log Messages:");
-        ImGui::BeginChild("LogMessages", ImVec2(0, 120), true);
-        // Render log messages. If the last message is a dynamic "is encrypting/decrypting"
-        // message and the process is still running, render that last line with a live timer
-        // Snapshot log messages under lock to avoid races with worker thread
-        std::vector<std::string> logsSnapshot;
-        bool snapshotHasDynamic = false;
-        {
-            std::lock_guard<std::mutex> lk(logMutex);
-            logsSnapshot = logMessages;
-            snapshotHasDynamic = hasDynamicLog;
-        }
-
-        int logCount = (int)logsSnapshot.size();
-
-        // Print all messages except the dynamic last one (we'll render it specially)
-        for (int i = 0; i < logCount; ++i)
-        {
-            if (i == logCount - 1 && snapshotHasDynamic && isProcessing)
-                continue;
-            ImGui::TextWrapped("%s", logsSnapshot[i].c_str());
-        }
-
-        // If processing, show dynamic line with timer (do NOT mutate logMessages here)
-        if (isProcessing)
-        {
-            auto currentTime = std::chrono::steady_clock::now();
-            auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(currentTime - startTime).count();
-            double secs = duration_us / 1e6;
-            if (snapshotHasDynamic && logCount > 0)
-            {
-                // show the last dynamic message with timer
-                ImGui::TextWrapped("%s [Running] Execution Time: %lld µs (%.6f s)", logsSnapshot.back().c_str(), duration_us, secs);
-            }
-            else
-            {
-                ImGui::TextWrapped("[Running] Execution Time: %lld µs (%.6f s)", duration_us, secs);
-            }
-        }
-        ImGui::EndChild();
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        // Show active threads/processes (now at the bottom)
-        if (taskManager)
-        {
-            if (useThreads)
-            {
-                auto threadIds = taskManager->getActiveThreadIds();
-                ImGui::Text("Active Threads:");
-
-                // Add thread info
-                char tidInfo[256];
-                pthread_t mainThread = pthread_self();
-                snprintf(tidInfo, sizeof(tidInfo), "Main Thread ID: %p", (void *)mainThread);
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%s", tidInfo);
-                ImGui::Spacing();
-
-                if (threadIds.empty())
-                {
-                    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.2f, 1.0f), "No active worker threads");
-                }
-                else
-                {
-                    ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.8f, 1.0f), "Worker Threads:");
-                    for (size_t i = 0; i < threadIds.size(); i++)
-                    {
-                        float threadProgress = taskManager->getProgress(i);
-                        ImGui::Text("Thread %zu (ID: %p)", i, (void *)threadIds[i]);
-                        std::string overlay = std::to_string(static_cast<int>(threadProgress * 100)) + "%";
-                        ImGui::ProgressBar(threadProgress, ImVec2(-1, 8), overlay.c_str());
-                        ImGui::Spacing();
-                    }
-
-                    // Add verification commands
-                    ImGui::Separator();
-                    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.2f, 1.0f), "Verify in terminal (macOS):");
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "sudo spindump %d 1 -arch arm64 -quiet", getpid());
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "or: sudo sample %d 1", getpid());
-                }
-            }
-            else
-            {
-                auto processIds = taskManager->getActiveProcessIds();
-                ImGui::Text("Active Processes:");
-
-                // Add system info
-                char pidInfo[256];
-                snprintf(pidInfo, sizeof(pidInfo), "Parent Process (GUI) PID: %d", getpid());
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "%s", pidInfo);
-                ImGui::Spacing();
-
-                if (processIds.empty())
-                {
-                    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.2f, 1.0f), "No active child processes");
-                }
-                else
-                {
-                    ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.8f, 1.0f), "Main Worker Processes (%zu):", processIds.size());
-                    for (size_t i = 0; i < processIds.size(); i++)
-                    {
-                        float processProgress = taskManager->getProgress(i);
-                        ImGui::Text("Worker Process %zu (PID: %d)", i, processIds[i]);
-                        std::string overlay = std::to_string(static_cast<int>(processProgress * 100)) + "%";
-                        ImGui::ProgressBar(processProgress, ImVec2(-1, 8), overlay.c_str());
-                        ImGui::Spacing();
-                    }
-                    
-                    // Show all related processes
-                    auto allProcesses = taskManager->getAllChildProcesses();
-                    if (!allProcesses.empty())
-                    {
-                        ImGui::Separator();
-                        ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.2f, 1.0f), "All Related Processes:");
-                        for (size_t i = 0; i < allProcesses.size(); i++)
-                        {
-                            pid_t pid = allProcesses[i];
-                            std::string processType = "Unknown";
-                            
-                            // Determine process type
-                            if (pid == getpid())
-                                processType = "GUI Process";
-                            else if (pid == getppid())
-                                processType = "Parent Process";
-                            else if (std::find(processIds.begin(), processIds.end(), pid) != processIds.end())
-                                processType = "Worker Process";
-                            else
-                                processType = "System Process";
-                            
-                            ImGui::Text("PID: %d (%s)", pid, processType.c_str());
-                        }
-                    }
-
-                    // Add verification commands
-                    ImGui::Separator();
-                    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.2f, 1.0f), "Process Monitoring Commands:");
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "ps -M -p %d", getpid());
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "ps aux | grep cryptocore");
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "pstree -p %d", getpid());
-                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "lsof -p %d", getpid());
-                    
-                    // Show process hierarchy
-                    ImGui::Spacing();
-                    ImGui::TextColored(ImVec4(0.6f, 0.8f, 0.2f, 1.0f), "Process Hierarchy:");
-                    ImGui::Text("GUI Process (PID: %d)", getpid());
-                    ImGui::Text("  └── Worker Processes:");
-                    for (size_t i = 0; i < processIds.size(); i++)
-                    {
-                        ImGui::Text("      └── Worker %zu (PID: %d)", i, processIds[i]);
-                    }
-                }
-            }
-        }
-    }
-    ImGui::End();
-    ImGui::PopStyleVar();
-}
-
 void CryptoCoreGUI::processFile(const std::string &path, Action action)
 {
     // Validate file exists and is accessible
@@ -572,106 +359,155 @@ void CryptoCoreGUI::processFile(const std::string &path, Action action)
         taskManager = std::make_unique<TaskManager>();
     }
 
-    // Fully reset all state and log for new operation
-    {
-        std::lock_guard<std::mutex> lk(logMutex);
-        logMessages.clear();
-        startTime = std::chrono::steady_clock::now();
-        showProcessingPanel = true;
-        isCompleted = false;
-        isProcessing = true;
-        completionTime = std::chrono::microseconds(0);
-    }
+    logMessages.clear();
+    startTime = std::chrono::steady_clock::now();
+    showProcessingPanel = true;
+    isCompleted = false;
+    isProcessing = true;
+    completionTime = std::chrono::microseconds(0);
 
     std::string actionStr = (action == Action::ENCRYPT) ? "Encrypting" : "Decrypting";
-    std::string completedStr = (action == Action::ENCRYPT) ? "File encrypted!" : "File decrypted!";
     statusMessage = actionStr + " file: " + path;
-    // Push initial status + dynamic line under lock
-    {
-        std::lock_guard<std::mutex> lk(logMutex);
-        logMessages.push_back(statusMessage);
-        std::string dynamicMsg;
-        if (action == Action::ENCRYPT)
-        {
-            dynamicMsg = "File is encrypting...";
-        }
-        else
-        {
-            dynamicMsg = "File is decrypting...";
-        }
-        logMessages.push_back(dynamicMsg);
-        hasDynamicLog = true;
-    }
+    logMessages.push_back(statusMessage);
 
     // Start processing in a separate thread to keep GUI responsive
-    std::thread([this, path, action]()
+    std::thread([this, path, action, actionStr]()
                 {
         bool success = false;
         try
         {
             if (useThreads)
             {
+                std::string msg = std::string("Starting thread-based ") +
+                                  (action == Action::ENCRYPT ? "encryption..." : "decryption...");
+                logMessages.push_back(msg);
                 success = taskManager->runWithThreads(path, action == Action::ENCRYPT);
             }
             else
             {
+                std::string msg = std::string("Starting process-based ") +
+                                  (action == Action::ENCRYPT ? "encryption..." : "decryption...");
+                logMessages.push_back(msg);
                 success = taskManager->runWithProcesses(path, action == Action::ENCRYPT);
-                // For process mode, ensure we wait for processes to complete
-                // Wait until all processes are done and progress is complete
-                while (!taskManager->isProcessingComplete())
-                {
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                }
             }
-        }
-        catch (const std::exception &e)
-        {
-            std::lock_guard<std::mutex> lk(logMutex);
-            // Update status safely
-            statusMessage = std::string("Error: ") + e.what();
-            logMessages.push_back(statusMessage);
-            isProcessing = false;
-            hasDynamicLog = false;
-            return;
-        }
-
-        // Update shared state after completion (under lock when modifying logs)
-        auto endTime = std::chrono::steady_clock::now();
-        completionTime = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
-        
-        // Always update the status message with completion time, regardless of panel state
-        std::string timeInfo = "Completed in " + std::to_string(completionTime.count() / 1000) + " ms";
-
-        {
-            std::lock_guard<std::mutex> lk(logMutex);
-            // First clear the dynamic line
-            if (hasDynamicLog && !logMessages.empty())
-            {
-                logMessages.pop_back();
-                hasDynamicLog = false;
-            }
-
-            isProcessing = false;
-            isCompleted = success;
 
             if (success)
             {
-                std::string doneMsg = (action == Action::ENCRYPT) ? "File encrypted!" : "File decrypted!";
-                statusMessage = doneMsg + " " + timeInfo;
-                logMessages.push_back(doneMsg);
-
-                char timeMsg[128];
-                long long us = completionTime.count();
-                double secs = us / 1e6;
-                snprintf(timeMsg, sizeof(timeMsg), "[Done] Total Execution Time: %lld µs (%.6f s)", us, secs);
-                logMessages.push_back(timeMsg);
+                auto endTime = std::chrono::steady_clock::now();
+                completionTime = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+                isCompleted = true;
+                isProcessing = false;
+                statusMessage = actionStr + " completed successfully!";
+                logMessages.push_back(statusMessage);
             }
             else
             {
+                isProcessing = false;
                 std::string error = taskManager->getStatusMessage();
                 statusMessage = "Error: " + error;
                 logMessages.push_back(statusMessage);
             }
+        }
+        catch (const std::exception &e)
+        {
+            isProcessing = false;
+            statusMessage = "Error: " + std::string(e.what());
+            logMessages.push_back(statusMessage);
         } })
         .detach();
+}
+
+void CryptoCoreGUI::renderProcessingPanel()
+{
+    const float PANEL_WIDTH = 600;
+    const float PANEL_HEIGHT = 400;
+
+    ImGui::SetNextWindowPos(ImVec2((WINDOW_WIDTH - PANEL_WIDTH) * 0.5f, (WINDOW_HEIGHT - PANEL_HEIGHT) * 0.5f),
+                            ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(PANEL_WIDTH, PANEL_HEIGHT), ImGuiCond_Appearing);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 20));
+    if (ImGui::Begin("Processing Status", &showProcessingPanel,
+                     ImGuiWindowFlags_NoCollapse))
+    {
+        // Header: execution time / status
+        if (isCompleted)
+        {
+            float secs = completionTime.count() / 1000000.0f; // microseconds -> seconds
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Total Execution Time: %.2f s", secs);
+        }
+        else if (isProcessing)
+        {
+            auto now = std::chrono::steady_clock::now();
+            float secs = std::chrono::duration_cast<std::chrono::microseconds>(now - startTime).count() / 1000000.0f;
+            ImGui::Text("Execution Time: %.2f s", secs);
+        }
+        else
+        {
+            ImGui::Text("Waiting to start...");
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Show threads or processes depending on mode
+        if (useThreads)
+        {
+            ImGui::Text("Active Threads:");
+            char tidInfo[64];
+            pthread_t mainThread = pthread_self();
+            snprintf(tidInfo, sizeof(tidInfo), "Main Thread ID: %p", (void *)mainThread);
+            ImGui::TextColored(ImVec4(0.6f, 0.9f, 0.6f, 1.0f), "%s", tidInfo);
+
+            auto threadIds = taskManager ? taskManager->getActiveThreadIds() : std::vector<pthread_t>{};
+            if (threadIds.empty())
+            {
+                ImGui::TextDisabled("No worker threads active");
+            }
+            else
+            {
+                for (size_t i = 0; i < threadIds.size(); ++i)
+                {
+                    float p = taskManager ? taskManager->getProgress(i) : 0.0f;
+                    ImGui::Text("Thread %zu (ID: %p)", i, (void *)threadIds[i]);
+                    std::string overlay = std::to_string(static_cast<int>(p * 100)) + "%";
+                    ImGui::ProgressBar(p, ImVec2(-1, 8), overlay.c_str());
+                }
+            }
+        }
+        else
+        {
+            ImGui::Text("Active Processes:");
+            auto pids = taskManager ? taskManager->getActiveProcessIds() : std::vector<pid_t>{};
+            if (pids.empty())
+            {
+                ImGui::TextDisabled("No worker processes active");
+            }
+            else
+            {
+                for (size_t i = 0; i < pids.size(); ++i)
+                {
+                    float p = taskManager ? taskManager->getProgress(i) : 0.0f;
+                    ImGui::Text("Process %zu (PID: %d)", i, pids[i]);
+                    std::string overlay = std::to_string(static_cast<int>(p * 100)) + "%";
+                    ImGui::ProgressBar(p, ImVec2(-1, 8), overlay.c_str());
+                }
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Log
+        ImGui::Text("Log Messages:");
+        ImGui::BeginChild("LogMessages", ImVec2(0, 120), true);
+        for (const auto &m : logMessages)
+            ImGui::TextWrapped("%s", m.c_str());
+        ImGui::EndChild();
+
+        ImGui::End();
+    }
+    ImGui::PopStyleVar();
 }

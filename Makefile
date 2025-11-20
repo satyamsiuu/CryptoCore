@@ -21,14 +21,17 @@ CONSOLE_TARGET = encrypt_decrypt.exe
 # GUI version
 GUI_SRCS = src/main_gui.cpp \
            src/gui/CryptoCoreGUI.cpp \
+           src/app/processes/SyncStats.cpp \
            src/app/processes/ProcessManagement.cpp \
            src/app/processes/TaskManager.cpp \
+           src/app/processes/BenchmarkManager.cpp \
+           src/app/processes/GroqAnalyzer.cpp \
            src/app/fileHandling/IO.cpp \
            src/app/fileHandling/ReadEnv.cpp \
            $(IMGUI_SRCS)
 
 GUI_TARGET = cryptocore_gui.exe
-GUI_LIBS = -L/opt/homebrew/lib -lglfw -framework OpenGL -framework Cocoa -framework IOKit
+GUI_LIBS = -L/opt/homebrew/lib -lglfw -lcurl -framework OpenGL -framework Cocoa -framework IOKit
 
 all: console gui
 

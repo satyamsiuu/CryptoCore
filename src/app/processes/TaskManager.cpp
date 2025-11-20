@@ -18,6 +18,8 @@ TaskManager::TaskManager() : semaphore_count(4)
     {
         throw std::runtime_error("Mutex initialization failed");
     }
+    // Default to XOR encryption
+    currentTechnique = std::make_unique<XOREncryption>();
 }
 
 TaskManager::~TaskManager()
@@ -26,17 +28,22 @@ TaskManager::~TaskManager()
     pthread_mutex_destroy(&semaphore_mutex);
 }
 
-// Simple XOR encryption/decryption function
-void encryptDecryptChunk(char *buffer, size_t size, bool isEncryption)
+// Encryption/decryption using current technique
+void encryptDecryptChunk(char *buffer, size_t size, bool isEncryption, EncryptionTechnique *technique)
 {
-    // Use different keys for encryption and decryption for better security
-    const char keyEnc = 0x2A; // Encryption key
-    const char keyDec = 0x2A; // Same key for decryption to make it reversible
-    const char key = isEncryption ? keyEnc : keyDec;
-
-    for (size_t i = 0; i < size; ++i)
+    if (technique)
     {
-        buffer[i] ^= key;
+        if (isEncryption)
+            technique->encryptChunk(buffer, size);
+        else
+            technique->decryptChunk(buffer, size);
+    }
+    else
+    {
+        // Fallback to XOR if no technique set
+        const char key = 0x2A;
+        for (size_t i = 0; i < size; ++i)
+            buffer[i] ^= key;
     }
 }
 
@@ -45,8 +52,12 @@ void *TaskManager::threadWorker(void *arg)
     auto *data = static_cast<ThreadData *>(arg);
     auto *manager = data->manager;
 
-    // Wait for semaphore
-    pthread_mutex_lock(&manager->semaphore_mutex);
+    // Initialize thread stats
+    SyncStats::initThreadStats(data->threadId);
+
+    // Wait for semaphore with stats tracking
+    SyncStats::recordSemaphoreAcquire(data->threadId);
+        pthread_mutex_lock(&manager->semaphore_mutex);
     while (manager->semaphore_count <= 0)
     {
         pthread_mutex_unlock(&manager->semaphore_mutex);
@@ -79,10 +90,12 @@ void *TaskManager::threadWorker(void *arg)
         // Read and process the chunk
         std::vector<char> buffer(actualChunkSize);
 
+        SyncStats::recordMutexLock(data->threadId);
         pthread_mutex_lock(&manager->mutex);
         file.seekg(data->startOffset);
         file.read(buffer.data(), actualChunkSize);
         pthread_mutex_unlock(&manager->mutex);
+        SyncStats::recordMutexUnlock(data->threadId);
 
         if (!file)
         {
@@ -90,13 +103,15 @@ void *TaskManager::threadWorker(void *arg)
         }
 
         // Process the chunk
-        encryptDecryptChunk(buffer.data(), actualChunkSize, data->isEncryption);
+        encryptDecryptChunk(buffer.data(), actualChunkSize, data->isEncryption, manager->currentTechnique.get());
 
         // Write back the processed chunk
+        SyncStats::recordMutexLock(data->threadId);
         pthread_mutex_lock(&manager->mutex);
         file.seekp(data->startOffset);
         file.write(buffer.data(), actualChunkSize);
         pthread_mutex_unlock(&manager->mutex);
+        SyncStats::recordMutexUnlock(data->threadId);
 
         if (!file)
         {
@@ -114,6 +129,7 @@ void *TaskManager::threadWorker(void *arg)
     }
 
     // Release semaphore
+    SyncStats::recordSemaphoreRelease(data->threadId);
     pthread_mutex_lock(&manager->semaphore_mutex);
     manager->semaphore_count++;
     pthread_mutex_unlock(&manager->semaphore_mutex);
@@ -208,12 +224,12 @@ bool TaskManager::runWithProcesses(const std::string &filePath, bool isEncryptio
     if (fileSize > 10 * 1024 * 1024) // 10MB
     {
         optimalProcesses = std::min(static_cast<size_t>(8), static_cast<size_t>(fileSize / (2 * 1024 * 1024))); // Max 8 processes, 1 per 2MB
-        optimalProcesses = std::max(optimalProcesses, static_cast<size_t>(4)); // At least 4 processes
+        optimalProcesses = std::max(optimalProcesses, static_cast<size_t>(4));                                  // At least 4 processes
     }
-    
+
     // Log the process creation info
     std::cout << "File size: " << fileSize << " bytes, Creating " << optimalProcesses << " processes" << std::endl;
-    
+
     processIds.clear();
     processIds.resize(optimalProcesses);
     threadProgress.resize(optimalProcesses, 0.0f);
@@ -260,8 +276,11 @@ bool TaskManager::runWithProcesses(const std::string &filePath, bool isEncryptio
                     throw std::runtime_error("Error reading file chunk");
                 }
 
-                // Process the chunk
-                encryptDecryptChunk(buffer.data(), actualChunkSize, isEncryption);
+                // Process the chunk - Note: in child process, we need to use default XOR
+                // as we can't share the technique pointer across processes
+                const char key = 0x2A;
+                for (size_t j = 0; j < actualChunkSize; ++j)
+                    buffer[j] ^= key;
 
                 // Write back
                 file.seekp(startOffset);
@@ -292,7 +311,7 @@ bool TaskManager::runWithProcesses(const std::string &filePath, bool isEncryptio
             processIds[i] = pid;
         }
     }
-    
+
     // Update process hierarchy to include all related processes
     updateProcessHierarchy();
 
@@ -343,37 +362,35 @@ bool TaskManager::runWithProcesses(const std::string &filePath, bool isEncryptio
         }
         else if (result == 0)
         {
-            // Check if all processes are done
-            processingDone = true;
-            bool allProgressComplete = true;
-            for (float progress : threadProgress)
-            {
-                if (progress < 1.0f)
-                {
-                    allProgressComplete = false;
-                    break;
-                }
-            }
+            // Check if all processes are done by verifying both progress and process state
+            bool allProgressComplete = std::all_of(threadProgress.begin(), threadProgress.end(),
+                                                   [](float progress)
+                                                   { return progress >= 1.0f; });
 
             if (allProgressComplete)
             {
                 // Verify all processes have actually finished
-                bool allProcessesDone = true;
+                processingDone = true;
                 for (pid_t pid : processIds)
                 {
                     int status;
                     pid_t result = waitpid(pid, &status, WNOHANG);
-                    if (result == 0)
+                    if (result == 0) // Process still running
                     {
-                        allProcessesDone = false;
+                        processingDone = false;
                         break;
                     }
+                    else if (result > 0) // Process finished
+                    {
+                        // Check if process exited normally
+                        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+                        {
+                            statusMessage = "Process " + std::to_string(pid) + " failed with status " + std::to_string(WEXITSTATUS(status));
+                            processingDone = true; // Mark as done even if failed
+                            break;
+                        }
+                    }
                 }
-                processingDone = allProcessesDone;
-            }
-            else
-            {
-                processingDone = false;
             }
         }
     }
@@ -428,7 +445,7 @@ bool TaskManager::isProcessingComplete() const
             return false;
         }
     }
-    
+
     // For processes, also check that no active processes remain
     if (!processIds.empty())
     {
@@ -442,7 +459,7 @@ bool TaskManager::isProcessingComplete() const
             }
         }
     }
-    
+
     return !threadProgress.empty();
 }
 
@@ -451,13 +468,13 @@ void TaskManager::clearCompletedProcesses()
     // Remove completed processes from the processIds vector
     processIds.erase(
         std::remove_if(processIds.begin(), processIds.end(),
-            [](pid_t pid) {
-                int status;
-                pid_t result = waitpid(pid, &status, WNOHANG);
-                return result != 0; // Process is done (either completed or error)
-            }),
-        processIds.end()
-    );
+                       [](pid_t pid)
+                       {
+                           int status;
+                           pid_t result = waitpid(pid, &status, WNOHANG);
+                           return result != 0; // Process is done (either completed or error)
+                       }),
+        processIds.end());
 }
 
 std::vector<pid_t> TaskManager::getAllChildProcesses() const
@@ -468,13 +485,13 @@ std::vector<pid_t> TaskManager::getAllChildProcesses() const
 void TaskManager::updateProcessHierarchy()
 {
     allChildProcesses.clear();
-    
+
     // Get all child processes of the current process
     // This includes direct children and their children
     for (pid_t pid : processIds)
     {
         allChildProcesses.push_back(pid);
-        
+
         // Try to find child processes of this process
         // This is a simplified approach - in a real system you'd use /proc or similar
         // For now, we'll add some system processes that might be involved
@@ -482,7 +499,7 @@ void TaskManager::updateProcessHierarchy()
             getpid(), // Current process
             getppid() // Parent process
         };
-        
+
         for (pid_t sysPid : systemPids)
         {
             if (std::find(allChildProcesses.begin(), allChildProcesses.end(), sysPid) == allChildProcesses.end())
@@ -498,4 +515,14 @@ std::string TaskManager::getProcessInfo(pid_t pid) const
     char info[256];
     snprintf(info, sizeof(info), "PID: %d", pid);
     return std::string(info);
+}
+
+void TaskManager::setEncryptionTechnique(std::unique_ptr<EncryptionTechnique> technique)
+{
+    currentTechnique = std::move(technique);
+}
+
+EncryptionType TaskManager::getCurrentTechniqueType() const
+{
+    return currentTechnique ? currentTechnique->getType() : EncryptionType::XOR;
 }
